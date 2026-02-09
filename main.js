@@ -1,5 +1,6 @@
 import buildLevel1 from "./levels/level1.js";
 import buildLevel2 from "./levels/level2.js";
+import buildLevel3 from "./levels/level3.js";
 
 const Matter = window.Matter;
 const { Engine, Render, Runner, Bodies, Composite, Body, Events, Query } = Matter;
@@ -17,7 +18,8 @@ const levelInstruction = document.getElementById("level-instruction");
 
 const levelBuilders = {
   "1": buildLevel1,
-  "2": buildLevel2
+  "2": buildLevel2,
+  "3": buildLevel3
 };
 
 function getLevelFromUrl() {
@@ -249,9 +251,11 @@ worldEl.addEventListener("click", (event) => {
   } else if (activeShape === "triangle") {
     block = Bodies.polygon(snappedX, snappedY, 3, Math.max(w, h) * 0.45, {
       isStatic: true,
+      angle: -Math.PI / 2,
       friction: 0.02,
       render: { fillStyle: fill }
     });
+    Body.setAngle(block, -Math.PI / 2);
   } else if (activeShape === "l") {
     block = createLBlock(snappedX, snappedY, w, h, fill);
   } else {
