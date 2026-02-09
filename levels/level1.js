@@ -7,7 +7,7 @@ export default function buildLevel(width, height, gridSize) {
     lavaPits: [
       { x: gridSize * 2.0, y: gridSize * 5.0, w: gridSize * 3.0, h: gridSize * 1.4 },
       { x: gridSize * 6.0, y: gridSize * 11.0, w: gridSize * 3.2, h: gridSize * 1.4 },
-      { x: gridSize * 12.0, y: gridSize * 16.5, w: gridSize * 3.4, h: gridSize * 1.4 }
+      { x: gridSize * 12.0, y: gridSize * 14.5, w: gridSize * 3.4, h: gridSize * 1.4 }
     ],
     obstacles: [
       {
