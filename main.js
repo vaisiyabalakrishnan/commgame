@@ -3,7 +3,7 @@ import buildLevel2 from "./levels/level2.js";
 import buildLevel3 from "./levels/level3.js";
 
 const Matter = window.Matter;
-const { Engine, Render, Runner, Bodies, Composite, Body, Events, Query } = Matter;
+const { Engine, Render, Runner, Bodies, Composite, Body, Events, Query, Constraint } = Matter;
 
 const worldEl = document.getElementById("world");
 const runBtn = document.getElementById("run");
@@ -28,12 +28,13 @@ function getLevelFromUrl() {
 }
 
 function resolveLevelBuilder() {
-  if (levelSelect && levelBuilders[levelSelect.value]) {
-    return levelBuilders[levelSelect.value];
-  }
   const fromUrl = getLevelFromUrl();
   if (fromUrl && levelBuilders[fromUrl]) {
+    if (levelSelect) levelSelect.value = fromUrl;
     return levelBuilders[fromUrl];
+  }
+  if (levelSelect && levelBuilders[levelSelect.value]) {
+    return levelBuilders[levelSelect.value];
   }
   return buildLevel1;
 }
@@ -97,6 +98,12 @@ let lavaBodies = [];
 let obstacleBodies = [];
 let levelBodies = [];
 let placedBlocks = [];
+let seesawBodies = [];
+let seesawConstraints = [];
+let seesawPlank = null;
+let seesawMaxAngle = 0;
+let seesawLaunchConfig = null;
+let seesawLaunched = false;
 let isRunning = false;
 let isResetting = false;
 let modalAction = null;
@@ -188,9 +195,9 @@ function loadLevel() {
   const level = currentLevelBuilder(width, height, gridSize);
 
   ball = Bodies.circle(level.ballStart.x, level.ballStart.y, 20, {
-    restitution: 0.25,
-    friction: 0.002,
-    frictionStatic: 0.02,
+    restitution: level.ballRestitution || 0.25,
+    friction: level.ballFriction || 0.002,
+    frictionStatic: level.ballFrictionStatic || 0.02,
     frictionAir: 0.001,
     render: { fillStyle: "#f97316" }
   });
@@ -212,6 +219,61 @@ function loadLevel() {
   levelBodies = [ball, goal, ...obstacleBodies, ...lavaBodies];
   Composite.add(engine.world, levelBodies);
 
+  seesawBodies = [];
+  seesawConstraints = [];
+  seesawPlank = null;
+  seesawMaxAngle = 0;
+  if (level.seesaw) {
+    const sw = level.seesaw;
+
+    const fulcrum = Bodies.polygon(sw.fulcrum.x, sw.fulcrum.y, 3, sw.fulcrum.size, {
+      isStatic: true,
+      isSensor: true,
+      render: { fillStyle: sw.fulcrum.color || "#475569" }
+    });
+
+    const plank = Bodies.rectangle(sw.plank.x, sw.plank.y, sw.plank.w, sw.plank.h, {
+      density: sw.plank.density || 0.001,
+      friction: sw.plank.friction || 0.8,
+      frictionStatic: 0.5,
+      frictionAir: sw.plank.frictionAir || 0.01,
+      render: { fillStyle: sw.plank.color || "#64748b" }
+    });
+
+    if (sw.plank.inertiaMultiplier) {
+      Body.setInertia(plank, plank.inertia * sw.plank.inertiaMultiplier);
+    }
+
+    const pivot = Constraint.create({
+      bodyA: plank,
+      pointA: { x: sw.pivot.offsetX || 0, y: 0 },
+      pointB: { x: sw.pivot.x, y: sw.pivot.y },
+      length: 0,
+      stiffness: 1,
+      render: { strokeStyle: "#475569", lineWidth: 2 }
+    });
+
+    seesawPlank = plank;
+    seesawMaxAngle = sw.maxAngle || Math.PI / 4;
+    seesawLaunchConfig = sw.launch || null;
+    seesawLaunched = false;
+    seesawBodies = [fulcrum, plank];
+    seesawConstraints = [pivot];
+
+    if (sw.weight) {
+      const weight = Bodies.rectangle(sw.weight.x, sw.weight.y, sw.weight.size, sw.weight.size, {
+        density: sw.weight.density || 0.015,
+        restitution: sw.weight.restitution || 0.05,
+        friction: sw.weight.friction || 0.8,
+        render: { fillStyle: sw.weight.color || "#ef4444" }
+      });
+      seesawBodies.push(weight);
+    }
+
+    Composite.add(engine.world, [...seesawBodies, ...seesawConstraints]);
+    levelBodies.push(...seesawBodies);
+  }
+
   updateInstruction(level);
 }
 
@@ -224,7 +286,7 @@ if (levelSelect) {
     currentLevelBuilder = levelBuilders[fromUrl];
   }
   levelSelect.addEventListener("change", () => {
-    currentLevelBuilder = resolveLevelBuilder();
+    currentLevelBuilder = levelBuilders[levelSelect.value] || buildLevel1;
     resetLevel();
   });
 }
@@ -266,7 +328,7 @@ worldEl.addEventListener("click", (event) => {
     });
   }
 
-  if (Query.collides(block, obstacleBodies).length > 0) {
+  if (Query.collides(block, [...obstacleBodies, ...seesawBodies]).length > 0) {
     hintEl.textContent = "Cannot place on obstacles";
     return;
   }
@@ -295,6 +357,14 @@ function resetLevel() {
 
   clearBodies(placedBlocks);
   placedBlocks = [];
+
+  seesawConstraints.forEach((c) => Composite.remove(engine.world, c));
+  seesawConstraints = [];
+  seesawBodies = [];
+  seesawPlank = null;
+  seesawMaxAngle = 0;
+  seesawLaunchConfig = null;
+  seesawLaunched = false;
 
   clearBodies(levelBodies);
   levelBodies = [];
@@ -341,5 +411,30 @@ Events.on(engine, "collisionStart", (evt) => {
         break;
       }
     }
+  }
+});
+
+Events.on(engine, "beforeUpdate", () => {
+  if (!seesawPlank || seesawMaxAngle <= 0) return;
+
+  const hitLimit = seesawPlank.angle > seesawMaxAngle || seesawPlank.angle < -seesawMaxAngle;
+  const angVel = seesawPlank.angularVelocity;
+
+  if (seesawPlank.angle > seesawMaxAngle) {
+    Body.setAngle(seesawPlank, seesawMaxAngle);
+    if (angVel > 0) Body.setAngularVelocity(seesawPlank, 0);
+  } else if (seesawPlank.angle < -seesawMaxAngle) {
+    Body.setAngle(seesawPlank, -seesawMaxAngle);
+    if (angVel < 0) Body.setAngularVelocity(seesawPlank, 0);
+  }
+
+  if (hitLimit && !seesawLaunched && ball && seesawLaunchConfig) {
+    seesawLaunched = true;
+    const rad = (seesawLaunchConfig.angle || 55) * Math.PI / 180;
+    const spd = seesawLaunchConfig.speed || 12;
+    Body.setVelocity(ball, {
+      x: spd * Math.cos(rad),
+      y: -spd * Math.sin(rad)
+    });
   }
 });
