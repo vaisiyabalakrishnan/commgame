@@ -1,6 +1,7 @@
 import buildLevel1 from "./levels/level1.js";
 import buildLevel2 from "./levels/level2.js";
 import buildLevel3 from "./levels/level3.js";
+import buildLevel4 from "./levels/level4.js";
 
 const Matter = window.Matter;
 const { Engine, Render, Runner, Bodies, Composite, Body, Events, Query, Constraint } = Matter;
@@ -19,7 +20,8 @@ const levelInstruction = document.getElementById("level-instruction");
 const levelBuilders = {
   "1": buildLevel1,
   "2": buildLevel2,
-  "3": buildLevel3
+  "3": buildLevel3,
+  "4": buildLevel4
 };
 
 function getLevelFromUrl() {
@@ -93,7 +95,9 @@ for (let y = 0; y <= height; y += gridSize) {
 Composite.add(engine.world, gridLines);
 
 let ball = null;
+let ball2 = null;
 let goal = null;
+let goal2 = null;
 let lavaBodies = [];
 let obstacleBodies = [];
 let levelBodies = [];
@@ -194,7 +198,7 @@ function updateInstruction(level) {
 function loadLevel() {
   const level = currentLevelBuilder(width, height, gridSize);
 
-  ball = Bodies.circle(level.ballStart.x, level.ballStart.y, 20, {
+  ball = Bodies.circle(level.ballStart.x, level.ballStart.y, level.ball1Radius || 20, {
     restitution: level.ballRestitution || 0.25,
     friction: level.ballFriction || 0.002,
     frictionStatic: level.ballFrictionStatic || 0.02,
@@ -202,10 +206,31 @@ function loadLevel() {
     render: { fillStyle: "#f97316" }
   });
 
+  ball2 = null;
+  goal2 = null;
+
+  if (level.ball2Start) {
+    ball2 = Bodies.circle(level.ball2Start.x, level.ball2Start.y, level.ball2Radius || 25, {
+      restitution: level.ballRestitution || 0.25,
+      friction: level.ballFriction || 0.002,
+      frictionStatic: level.ballFrictionStatic || 0.02,
+      frictionAir: 0.001,
+      render: { fillStyle: "#c084fc" }
+    });
+  }
+
   goal = Bodies.polygon(level.goal.x, level.goal.y, 5, 22, {
     isStatic: true,
     render: { fillStyle: "#facc15" }
   });
+
+  if (level.goal2) {
+    goal2 = Bodies.rectangle(
+      level.goal2.x, level.goal2.y,
+      level.goal2.w || 100, level.goal2.h || 40,
+      { isStatic: true, isSensor: true, render: { fillStyle: "#ef4444" } }
+    );
+  }
 
   lavaBodies = (level.lavaPits || []).map((pit) =>
     Bodies.rectangle(pit.x, pit.y, pit.w, pit.h, {
@@ -216,7 +241,14 @@ function loadLevel() {
   );
 
   obstacleBodies = level.obstacles.map(createObstacle);
-  levelBodies = [ball, goal, ...obstacleBodies, ...lavaBodies];
+  levelBodies = [
+    ball,
+    ...(ball2 ? [ball2] : []),
+    goal,
+    ...(goal2 ? [goal2] : []),
+    ...obstacleBodies,
+    ...lavaBodies
+  ];
   Composite.add(engine.world, levelBodies);
 
   seesawBodies = [];
@@ -275,6 +307,9 @@ function loadLevel() {
   }
 
   updateInstruction(level);
+  if (level.ball2Start) {
+    hintEl.textContent = "Orange = small · Purple = large — click to place blocks";
+  }
 }
 
 loadLevel();
@@ -399,12 +434,37 @@ modalClose.addEventListener("click", closeModal);
 
 Events.on(engine, "collisionStart", (evt) => {
   for (const pair of evt.pairs) {
-    if ((pair.bodyA === ball && pair.bodyB === goal) || (pair.bodyA === goal && pair.bodyB === ball)) {
+    const { bodyA, bodyB } = pair;
+
+    // Small ball reaches Goal A → success
+    if ((bodyA === ball && bodyB === goal) || (bodyA === goal && bodyB === ball)) {
       hintEl.textContent = "Goal reached!";
       showModal("Success", "Goal reached!", null);
     }
+
+    // Large ball reaches Goal A → failure (wrong ball got through the filter)
+    if (ball2 && ((bodyA === ball2 && bodyB === goal) || (bodyA === goal && bodyB === ball2))) {
+      hintEl.textContent = "Large ball got through!";
+      showModal("Try again", "The large ball slipped through the filter!", resetLevel);
+    }
+
+    // Any ball hits Goal B sensor → failure
+    if (goal2) {
+      const hitsGoal2 =
+        (bodyA === goal2 && (bodyB === ball || bodyB === ball2)) ||
+        (bodyB === goal2 && (bodyA === ball || bodyA === ball2));
+      if (hitsGoal2) {
+        hintEl.textContent = "Ball in the failure zone!";
+        showModal("Try again", "A ball landed in the wrong zone!", resetLevel);
+      }
+    }
+
+    // Lava pit collisions for all balls
     for (const pit of lavaBodies) {
-      if ((pair.bodyA === ball && pair.bodyB === pit) || (pair.bodyA === pit && pair.bodyB === ball)) {
+      const ballHit =
+        (bodyA === ball && bodyB === pit) || (bodyA === pit && bodyB === ball) ||
+        (ball2 && ((bodyA === ball2 && bodyB === pit) || (bodyA === pit && bodyB === ball2)));
+      if (ballHit) {
         hintEl.textContent = "Ball fell into lava.";
         showModal("Try again", "Ball fell into lava.", resetLevel);
         break;
