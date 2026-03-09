@@ -79,18 +79,6 @@ Common fixes / troubleshooting
 	- Placement guarding uses `overlapsWithObstacle` and `Query.collides` in `main.js`.
 	- To change sensitivity, tweak `margin` in `overlapsWithObstacle` or use `Query.collides` only.
 
-- Triangle placement upside-down:
-	- The repo uses `createUprightTriangle(x,y,w,h,fill)` in `main.js` for placed triangles. If a level obstacle triangle appears inverted, modify `createObstacle` to call this helper for obstacle triangles.
-
-- Want a real see-saw / hinged plank:
-	- A dynamic see-saw requires a non-static plank and a pivot constraint.
-	- Example approach (in a level loader or `main.js`):
-		- `const plank = Bodies.rectangle(x, y, w, h, { density: 0.002 });`
-		- `const pivot = Bodies.circle(x, y, 6, { isStatic: true });`
-		- `Composite.add(engine.world, [plank, pivot]);`
-		- Use `Constraint.create({ bodyA: plank, pointB: { x, y }, stiffness: 1, length: 0 })` to constrain the plank to the pivot.
-	- After adding the dynamic plank, update collision logic as needed (plank should not be `isStatic`).
-
 Debugging tips
 --------------
 - Open the browser dev tools console (Cmd/Ctrl+Shift+I) — errors from `main.js` often indicate missing imports or bad level object fields.
