@@ -410,6 +410,48 @@ function resetLevel() {
 
 resetBtn.addEventListener("click", resetLevel);
 
+function softResetLevel() {
+  if (isResetting) return;
+  if (isModalOpen) closeModal();
+  isResetting = true;
+  if (isRunning) {
+    Runner.stop(runner);
+  }
+  isRunning = false;
+  engine.world.gravity.y = 0;
+  hintEl.textContent = "Click grid to place block";
+
+  seesawConstraints.forEach((c) => Composite.remove(engine.world, c));
+  seesawConstraints = [];
+  seesawBodies = [];
+  seesawPlank = null;
+  seesawMaxAngle = 0;
+  seesawLaunchConfig = null;
+  seesawLaunched = false;
+
+  clearBodies(levelBodies);
+  levelBodies = [];
+  lavaBodies = [];
+  obstacleBodies = [];
+  loadLevel();
+  // placedBlocks are NOT cleared
+  if (!isSyncedAction && role) channel.postMessage({ type: "soft-reset" });
+  isResetting = false;
+}
+
+function clearPlacedBlocks() {
+  if (isModalOpen) closeModal();
+  clearBodies(placedBlocks);
+  placedBlocks = [];
+  hintEl.textContent = "Blocks cleared. Click grid to place new ones.";
+  if (!isSyncedAction && role) channel.postMessage({ type: "clear-blocks" });
+}
+
+const resetBallBtn = document.getElementById("reset-ball");
+const clearBlocksBtn = document.getElementById("clear-blocks");
+if (resetBallBtn) resetBallBtn.addEventListener("click", softResetLevel);
+if (clearBlocksBtn) clearBlocksBtn.addEventListener("click", clearPlacedBlocks);
+
 function showModal(title, message, onClose) {
   if (isModalOpen) return;
   isModalOpen = true;
@@ -423,9 +465,10 @@ function closeModal() {
   if (!isModalOpen) return;
   modalEl.classList.remove("active");
   isModalOpen = false;
-  if (modalAction) {
-    const action = modalAction;
-    modalAction = null;
+  // Clear modalAction first so we don't execute stale callbacks
+  const action = modalAction;
+  modalAction = null;
+  if (action) {
     action();
   }
 }
@@ -497,3 +540,116 @@ Events.on(engine, "beforeUpdate", () => {
     });
   }
 });
+
+const channel = role ? new BroadcastChannel("commgame") : null;
+if (channel) channel.postMessage({ type: "hello", role });
+
+function setPartnerOnline(online) {
+  const el = document.getElementById("partner-status");
+  if (!el) return;
+  el.textContent = online ? "Partner online" : "Partner offline";
+  el.className = "partner-status " + (online ? "online" : "offline");
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function appendChatMessage(fromRole, text, isMine) {
+  const box = document.getElementById("chat-messages");
+  if (!box) return;
+  const div = document.createElement("div");
+  div.className = "msg " + (isMine ? "mine" : "theirs");
+  const label = fromRole === "instructor" ? "Instructor" : "Builder";
+  div.innerHTML = `<span class="msg-label">${label}</span><span class="msg-text">${escapeHtml(text)}</span>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function recreateBlock(msg) {
+  const { shape, w, h, x, y } = msg;
+  const fill = "#38bdf8";
+  if (shape === "round") {
+    return Bodies.rectangle(x, y, w, h, { isStatic: true, chamfer: { radius: Math.min(w, h) * 0.35 }, friction: 0.02, render: { fillStyle: fill } });
+  }
+  if (shape === "triangle") {
+    return Bodies.polygon(x, y, 3, Math.max(w, h) * 0.45, { isStatic: true, angle: -0.48, friction: 0.02, render: { fillStyle: fill } });
+  }
+  if (shape === "l") return createLBlock(x, y, w, h, fill);
+  return Bodies.rectangle(x, y, w, h, { isStatic: true, friction: 0.02, render: { fillStyle: fill } });
+}
+
+if (channel) {
+  channel.addEventListener("message", (evt) => {
+    const msg = evt.data;
+    switch (msg.type) {
+      case "hello":
+        setPartnerOnline(true);
+        channel.postMessage({ type: "hello-ack", role });
+        break;
+      case "hello-ack":
+        setPartnerOnline(true);
+        break;
+      case "bye":
+        setPartnerOnline(false);
+        break;
+      case "chat":
+        appendChatMessage(msg.role, msg.text, false);
+        break;
+      case "run":
+        if (!isRunning) {
+          isSyncedAction = true;
+          isRunning = true;
+          engine.world.gravity.y = 1;
+          Runner.run(runner, engine);
+          hintEl.textContent = "Simulation running";
+          isSyncedAction = false;
+        }
+        break;
+      case "reset":
+        isSyncedAction = true;
+        resetLevel();
+        isSyncedAction = false;
+        break;
+      case "soft-reset":
+        isSyncedAction = true;
+        softResetLevel();
+        isSyncedAction = false;
+        break;
+      case "clear-blocks":
+        isSyncedAction = true;
+        clearPlacedBlocks();
+        isSyncedAction = false;
+        break;
+      case "level":
+        if (levelBuilders[msg.value]) {
+          isSyncedAction = true;
+          if (levelSelect) levelSelect.value = msg.value;
+          currentLevelBuilder = levelBuilders[msg.value];
+          resetLevel();
+          isSyncedAction = false;
+        }
+        break;
+      case "block":
+        if (isInstructor) {
+          const b = recreateBlock(msg);
+          if (b) { placedBlocks.push(b); Composite.add(engine.world, b); }
+        }
+        break;
+    }
+  });
+  window.addEventListener("beforeunload", () => { channel.postMessage({ type: "bye", role }); });
+}
+
+const chatInput = document.getElementById("chat-input");
+const chatSend = document.getElementById("chat-send");
+function sendChat() {
+  if (!chatInput || !channel) return;
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = "";
+  appendChatMessage(role, text, true);
+  channel.postMessage({ type: "chat", role, text });
+}
+if (chatSend) chatSend.addEventListener("click", sendChat);
+if (chatInput) chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
