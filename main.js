@@ -2,6 +2,7 @@ import buildLevel1 from "./levels/level1.js";
 import buildLevel2 from "./levels/level2.js";
 import buildLevel3 from "./levels/level3.js";
 import buildLevel4 from "./levels/level4.js";
+import buildLevel5 from "./levels/level5.js";
 
 const Matter = window.Matter;
 const { Engine, Render, Runner, Bodies, Composite, Body, Events, Query, Constraint } = Matter;
@@ -21,7 +22,8 @@ const levelBuilders = {
   "1": buildLevel1,
   "2": buildLevel2,
   "3": buildLevel3,
-  "4": buildLevel4
+  "4": buildLevel4,
+  "5": buildLevel5
 };
 
 function getLevelFromUrl() {
@@ -108,6 +110,9 @@ let seesawPlank = null;
 let seesawMaxAngle = 0;
 let seesawLaunchConfig = null;
 let seesawLaunched = false;
+let timedGateBodies = [];       // one entry per gate in level.timedGates
+let timedGateConfigs = [];      // cached gate config objects (x, y, freq, amp, axis …)
+let timedGateStartTime = null;
 let isRunning = false;
 let isResetting = false;
 let modalAction = null;
@@ -304,6 +309,35 @@ function loadLevel() {
 
     Composite.add(engine.world, [...seesawBodies, ...seesawConstraints]);
     levelBodies.push(...seesawBodies);
+  }
+
+  // ─── Timed Gate Setup ───
+  timedGateBodies  = [];
+  timedGateConfigs = [];
+  timedGateStartTime = null;
+
+  // ── New multi-gate API: level.timedGates (array) ──
+  const gateList = level.timedGates
+    ? level.timedGates
+    : level.timedGate                    // backward-compat: single gate
+      ? [level.timedGate]
+      : [];
+
+  if (gateList.length) {
+    timedGateStartTime = Date.now();
+    for (const tg of gateList) {
+      const body = Bodies.rectangle(tg.x, tg.y, tg.w, tg.h, {
+        isStatic: true,
+        isSensor: false,
+        friction: 0.8,
+        render: { fillStyle: tg.color },
+        label: "timedGate"
+      });
+      timedGateBodies.push(body);
+      timedGateConfigs.push(tg);
+      levelBodies.push(body);
+      Composite.add(engine.world, body);
+    }
   }
 
   updateInstruction(level);
@@ -517,6 +551,28 @@ Events.on(engine, "collisionStart", (evt) => {
 });
 
 Events.on(engine, "beforeUpdate", () => {
+  // ─── Timed Gate Oscillation ───
+  if (timedGateBodies.length && timedGateStartTime) {
+    const elapsed = Date.now() - timedGateStartTime;
+    timedGateConfigs.forEach((tg, i) => {
+      const body  = timedGateBodies[i];
+      if (!body) return;
+      const phase  = tg.phaseOffset || 0;
+      const rawSin = Math.sin(elapsed * tg.frequency + phase);
+
+      if (tg.axis === "y") {
+        // Portcullis: gate rises (y decreases) when sin < 0, stays closed otherwise
+        const lift = Math.max(0, -rawSin) * tg.amplitude;
+        Body.setPosition(body, { x: body.position.x, y: tg.y - lift });
+      } else {
+        // Horizontal swing (default / backward-compat)
+        const offset = rawSin * tg.amplitude;
+        Body.setPosition(body, { x: tg.x + offset, y: body.position.y });
+      }
+    });
+  }
+
+  // ─── See-Saw Plank Movement ───
   if (!seesawPlank || seesawMaxAngle <= 0) return;
 
   const hitLimit = seesawPlank.angle > seesawMaxAngle || seesawPlank.angle < -seesawMaxAngle;
